@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 import os
@@ -15,6 +16,7 @@ from app.core.config import settings
 from app.db.base import Base, engine
 from app.db.optimize import optimize_database
 from app.db.init_db import init_db
+from app.utils.connection_pool import close_http_pool
 
 # Check Pydantic version for compatibility
 try:
@@ -79,6 +81,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown: Clean up resources
     logger.info("Shutting down application...")
+    await close_http_pool()
 
 # Create FastAPI app
 app = FastAPI(
@@ -86,6 +89,9 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan,
 )
+
+# Add compression middleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Set up CORS
 app.add_middleware(
@@ -95,6 +101,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # Add middleware for request timing
 @app.middleware("http")

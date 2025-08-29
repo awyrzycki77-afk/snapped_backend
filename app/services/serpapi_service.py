@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from app.utils.performance import timed_async, run_in_threadpool
+from app.utils.connection_pool import get_http_client
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -128,37 +129,37 @@ async def search_similar_products(image_url: str) -> List[Dict[str, Any]]:
         "gl": "us"
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for attempt in range(3):
-            try:
-                logger.info(f"Making Google Lens request for image: {image_url}")
-                response = await client.get(api_url, params=params)
+    client = await get_http_client()
+    for attempt in range(3):
+        try:
+            logger.info(f"Making Google Lens request for image: {image_url}")
+            response = await client.get(api_url, params=params)
 
-                if response.status_code != 200:
-                    raise Exception(
-                        f"Google Lens request failed with status {response.status_code}: {response.text}"
-                    )
+            if response.status_code != 200:
+                raise Exception(
+                    f"Google Lens request failed with status {response.status_code}: {response.text}"
+                )
 
-                data = response.json()
-                products = await process_google_lens_response(data)
+            data = response.json()
+            products = await process_google_lens_response(data)
 
-                if not products:
-                    logger.warning(f"No products found for image: {image_url}")
-                    return []
+            if not products:
+                logger.warning(f"No products found for image: {image_url}")
+                return []
 
-                # Filter products where price is not available
-                products_with_price = [product for product in products if product.get("price")]
-                
-                logger.info(f"Found {len(products_with_price)} products with valid prices from Google Lens")
-                return products_with_price
+            # Filter products where price is not available
+            products_with_price = [product for product in products if product.get("price")]
+            
+            logger.info(f"Found {len(products_with_price)} products with valid prices from Google Lens")
+            return products_with_price
 
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
-                if attempt == 2:
-                    logger.error(f"Google Lens request failed after 3 attempts: {str(e)}")
-                    raise
-                wait_time = 2 ** attempt  # 1, 2, 4 seconds
-                logger.warning(f"Google Lens request failed (attempt {attempt+1}/3). Retrying in {wait_time}s: {str(e)}")
-                await asyncio.sleep(wait_time)
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            if attempt == 2:
+                logger.error(f"Google Lens request failed after 3 attempts: {str(e)}")
+                raise
+            wait_time = 2 ** attempt  # 1, 2, 4 seconds
+            logger.warning(f"Google Lens request failed (attempt {attempt+1}/3). Retrying in {wait_time}s: {str(e)}")
+            await asyncio.sleep(wait_time)
 
 async def process_google_lens_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
